@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
@@ -41,11 +41,19 @@ export default function Client() {
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [activePlayerName, setActivePlayerName] = useState('');
   const [currentWord, setCurrentWord] = useState('');
+  const [isWordRevealed, setIsWordRevealed] = useState(false);
   const [timerStarted, setTimerStarted] = useState(false);
   const [exploded, setExploded] = useState(false);
 
   const [selectedMode, setSelectedMode] = useState('family');
   const [skipsUsed, setSkipsUsed] = useState(0);
+
+  // Keep a mutable ref of myTeam to prevent stale closure in socket listeners without reconnecting
+  const myTeamRef = useRef(null);
+
+  useEffect(() => {
+    myTeamRef.current = myTeam;
+  }, [myTeam]);
 
   useEffect(() => {
     const newSocket = io(SERVER_URL);
@@ -78,9 +86,12 @@ export default function Client() {
       setTimerStarted(false);
       setExploded(false);
       setCurrentWord('');
+      setIsWordRevealed(false); // Hide the word on a new turn
       setSkipsUsed(data.skipsUsed);
       setActivePlayerName(data.activePlayerName);
-      if (myTeam && data.activeTeamId === myTeam.id) {
+      
+      const currentTeam = myTeamRef.current;
+      if (currentTeam && data.activeTeamId === currentTeam.id) {
         setIsMyTurn(true);
         if (window.navigator.vibrate) {
           window.navigator.vibrate([150, 100, 150]);
@@ -104,7 +115,7 @@ export default function Client() {
     });
 
     return () => newSocket.disconnect();
-  }, [myTeam]);
+  }, []);
 
   const handleJoin = () => {
     // Filter out empty player names
@@ -282,17 +293,40 @@ export default function Client() {
                   🔥 دور فريقكم الآن
                 </span>
                 
-                {!timerStarted ? (
+                {!isWordRevealed ? (
+                  <div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', lineHeight: '1.6' }}>
+                      الرجاء تسليم الجوال للممثل الحالي:
+                    </p>
+                    <div style={{
+                      background: 'rgba(251, 133, 0, 0.08)',
+                      border: '2px solid var(--color-orange)',
+                      borderRadius: '16px',
+                      padding: '20px',
+                      fontSize: '1.6rem',
+                      fontWeight: 'bold',
+                      color: 'var(--color-orange)',
+                      margin: '15px 0'
+                    }}>
+                      👤 {activePlayerName}
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginBottom: '25px' }}>
+                      ⚠️ ممنوع على باقي أعضاء الفريق النظر إلى الشاشة!
+                    </p>
+                    <button className="btn-neon btn-cyan" style={{ fontSize: '1.3rem', padding: '16px' }} onClick={() => setIsWordRevealed(true)}>
+                      أنا {activePlayerName} ومستعد! 👁️
+                    </button>
+                  </div>
+                ) : !timerStarted ? (
                   <div>
                     <p style={{ color: 'var(--text-muted)', fontSize: '1.05rem', lineHeight: '1.6' }}>
-                      قم بتسليم الجوال للممثل الحالي: <strong style={{ color: 'var(--color-red)', fontSize: '1.2rem', textDecoration: 'underline' }}>{activePlayerName}</strong>. 
-                      ممنوع التحدث نهائياً، تمثيل إشاري فقط!
+                      هذه هي كلمتك السرية. اقرأها جيداً ثم اضغط على زر البدء لتشغيل الوقت:
                     </p>
                     <div className="word-box" style={{ animation: 'pulse 1s infinite alternate' }}>
                       {currentWord}
                     </div>
                     <button className="btn-neon btn-orange" style={{ fontSize: '1.5rem', padding: '20px', marginTop: '20px' }} onClick={handleStart}>
-                      ابــدأ الجولة ⏳
+                      ابدأ الوقت واللعب ⏳
                     </button>
                   </div>
                 ) : (
