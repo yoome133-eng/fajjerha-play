@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
@@ -110,13 +110,33 @@ export default function Host() {
   const [audioAllowed, setAudioAllowed] = useState(false);
   const [muted, setMuted] = useState(false);
 
+  // Proverb count states
+  const [proverbsCount, setProverbsCount] = useState(10);
+  const [currentProverbNumber, setCurrentProverbNumber] = useState(1);
+  const [totalProverbsCount, setTotalProverbsCount] = useState(10);
+  const [winnerName, setWinnerName] = useState('');
+
   // Animation indicators
   const [particles, setParticles] = useState([]);
   const [bumpScoreTeamId, setBumpScoreTeamId] = useState(null);
 
+  // Keep refs of state accessed in the socket event listeners to prevent reconnect loops
+  const gameStateRef = useRef(gameState);
+  const mutedRef = useRef(muted);
+  const socketRef = useRef(null);
+
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
   useEffect(() => {
     const newSocket = io(SERVER_URL);
     setSocket(newSocket);
+    socketRef.current = newSocket;
 
     newSocket.on('connect', () => {
       newSocket.emit('createRoom');
@@ -128,6 +148,10 @@ export default function Host() {
 
     newSocket.on('modeUpdated', (mode) => {
       setGameMode(mode);
+    });
+
+    newSocket.on('proverbCountUpdated', (count) => {
+      setProverbsCount(count);
     });
 
     newSocket.on('updateTeams', (updatedTeams) => {
@@ -144,7 +168,7 @@ export default function Host() {
         }
         return updatedTeams;
       });
-      if (gameState === 'playing' && !muted) {
+      if (gameStateRef.current === 'playing' && !mutedRef.current) {
         playSuccessSound();
       }
     });
@@ -159,6 +183,8 @@ export default function Host() {
       setTimer(60);
       setIsTimerRunning(false);
       setExploded(false);
+      setCurrentProverbNumber(data.currentNumber || 1);
+      setTotalProverbsCount(data.totalCount || 10);
     });
 
     newSocket.on('timerStarted', () => {
@@ -169,7 +195,7 @@ export default function Host() {
       setIsTimerRunning(false);
       setTimer(0);
       setExploded(true);
-      if (!muted) {
+      if (!mutedRef.current) {
         playExplosionSound();
       }
     });
@@ -178,8 +204,27 @@ export default function Host() {
       setTimer((prev) => Math.max(0, prev - seconds));
     });
 
+    newSocket.on('gameOver', (data) => {
+      setTeams(data.teams);
+      setWinnerName(data.winnerName);
+    });
+
     return () => newSocket.disconnect();
-  }, [gameState, muted]);
+  }, []);
+
+  const handleProverbCountChange = (e) => {
+    const val = parseInt(e.target.value);
+    setProverbsCount(val);
+    if (socketRef.current) {
+      socketRef.current.emit('updateProverbCount', { roomCode, count: val });
+    }
+  };
+
+  const handlePlayAgain = () => {
+    if (socketRef.current) {
+      socketRef.current.emit('playAgain', roomCode);
+    }
+  };
 
   // Handle particle explosion generation
   useEffect(() => {
@@ -210,7 +255,9 @@ export default function Host() {
         setTimer((prev) => {
           if (prev <= 1) {
             clearInterval(interval);
-            socket.emit('timeOut', roomCode);
+            if (socketRef.current) {
+              socketRef.current.emit('timeOut', roomCode);
+            }
             return 0;
           }
           // Sound ticked if not muted
@@ -226,7 +273,7 @@ export default function Host() {
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isTimerRunning, timer, socket, roomCode, muted]);
+  }, [isTimerRunning, timer, roomCode, muted]);
 
   const handleAllowAudio = () => {
     setAudioAllowed(true);
@@ -237,11 +284,7 @@ export default function Host() {
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (timer / 60) * circumference;
 
-  const modeNames = {
-    family: "عائلي",
-    challenge: "تحدي وقوة",
-    heritage: "شيبان وتراث"
-  };
+
 
   return (
     <div className="container">
@@ -266,7 +309,7 @@ export default function Host() {
           </div>
           <h2 style={{ color: 'var(--text-dark)', marginBottom: '5px' }}>بانتظار تجهيز القنابل...</h2>
           <span style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>
-            الطور المختار: <strong style={{ color: 'var(--color-orange)' }}>{modeNames[gameMode]}</strong>
+            الطور المختار: <strong style={{ color: 'var(--color-orange)' }}>أمثال شعبية 🌴</strong>
           </span>
           
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '30px', margin: '25px 0' }}>
@@ -285,6 +328,44 @@ export default function Host() {
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginTop: '10px', fontWeight: 'bold' }}>امسح الكود للدخول مباشرة 📱</span>
               </div>
             )}
+          </div>
+          
+          {/* Proverb Count Settings */}
+          <div style={{
+            margin: '10px 0 25px 0',
+            padding: '12px 25px',
+            background: '#f8fafc',
+            borderRadius: '16px',
+            border: '1px solid #e2e8f0',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '15px'
+          }}>
+            <span style={{ fontSize: '1.05rem', color: 'var(--text-dark)', fontWeight: 'bold' }}>
+              🎯 عدد الأمثال في هذه الجولة:
+            </span>
+            <select
+              value={proverbsCount}
+              onChange={handleProverbCountChange}
+              style={{
+                padding: '8px 16px',
+                fontSize: '1rem',
+                borderRadius: '10px',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                fontFamily: 'Cairo, sans-serif',
+                fontWeight: 'bold',
+                color: 'var(--color-orange)',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="10">10 أمثال</option>
+              <option value="12">12 مثل</option>
+              <option value="14">14 مثل</option>
+              <option value="16">16 مثل</option>
+              <option value="18">18 مثل</option>
+              <option value="20">20 مثل</option>
+            </select>
           </div>
           
           <div className="teams-grid">
@@ -324,9 +405,14 @@ export default function Host() {
             {muted ? '🔇' : '🔊'}
           </button>
 
-          <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>
-            الطور: {modeNames[gameMode]}
-          </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '10px', marginTop: '10px' }}>
+            <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>
+              الطور: أمثال شعبية 🌴
+            </span>
+            <span style={{ fontSize: '1rem', color: 'var(--color-orange)', fontWeight: 'bold' }}>
+              المثل {currentProverbNumber} من {totalProverbsCount}
+            </span>
+          </div>
 
           <div className="teams-grid" style={{ marginTop: '10px', marginBottom: '25px' }}>
             {teams.map((t, i) => (
@@ -397,6 +483,29 @@ export default function Host() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {gameState === 'gameOver' && (
+        <div className="premium-card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ fontSize: '5rem', marginBottom: '20px' }}>🏆</div>
+          <h2 style={{ color: 'var(--text-dark)' }}>انتهت اللعبة!</h2>
+          <h1 style={{ color: 'var(--color-orange)', fontSize: '2.5rem', margin: '15px 0' }}>الفائز: {winnerName}</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>تهانينا للفريق الفائز وحظاً أوفر للفريق الآخر!</p>
+          
+          <div style={{ background: '#f8fafc', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', margin: '25px 0', textAlign: 'right' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: 'var(--text-dark)', fontSize: '1.2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '10px' }}>📊 النتائج النهائية:</h3>
+            {teams.map((t, idx) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', padding: '10px 0', borderBottom: idx === 0 ? '1px solid #edf2f7' : 'none' }}>
+                <strong style={{ color: idx === 0 ? 'var(--color-cyan)' : 'var(--color-red)' }}>{t.name}</strong>
+                <span style={{ fontWeight: 'bold' }}>{t.score} نقاط</span>
+              </div>
+            ))}
+          </div>
+
+          <button className="btn-neon btn-orange" style={{ margin: '0 auto', maxWidth: '300px' }} onClick={handlePlayAgain}>
+            لعب مجدداً 🔄
+          </button>
         </div>
       )}
     </div>
